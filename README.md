@@ -2,7 +2,7 @@
 
 This project utilizes two data sets:
 
-1. effectiveness_snapshot contains a summary of teacher effectiveness ratings broken out by school. Teachers are assigned a rating of Highly Effective, Effective, Minimally Effective, or Ineffective based on the district’s teacher evaluation rubric.
+1. EducatorEffectivenessSnapshot.xlsx contains a summary of teacher effectiveness ratings broken out by school. Teachers are assigned a rating of Highly Effective, Effective, Minimally Effective, or Ineffective based on the district’s teacher evaluation rubric.
 
 2. student_scores contains aggregated student test results for the 2013-2014 state assessment for all schools in a district, with results broken out by grade and subgroup.
 
