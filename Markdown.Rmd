@@ -1,0 +1,797 @@
+---
+title: "Exploring the relationship between math proficiency and educator effectiveness "
+author: "Isaac Baca"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+---
+
+# Introduction
+
+This project utilizes two data sets: 
+
+1. `effectiveness_snapshot` contains a summary of teacher effectiveness ratings broken out by school. Teachers are assigned a rating of Highly Effective, Effective, Minimally Effective, or Ineffective based on the district’s teacher evaluation rubric.
+
+2. `student_scores` contains aggregated student test results for the 2013-2014 state assessment for all schools in a district, with results broken out by grade and subgroup.
+
+In part one of this project, I will summarize the Student Scores data to show the percent of students who are proficient or higher in math at each school.  I will then populate a table showing the top ten schools in math proficiency along with their proficiency rates (percent of students scoring at proficient or higher).
+
+In part two of this project, I will explore the relationship between math proficiency and educator effectiveness at the school level.  
+
+---
+
+# Table of contents
+
+1. [Part 1: Top ten schools in math proficiency](#one)
+
+      1.a [Data cleaning/wrangling](#one-one)
+    
+      1.b [Top ten schools](#one-two)
+    
+2. [Part 2: Relationship between math proficiency and teacher effectiveness](#two)
+
+      2.a [Data cleaning/wrangling](#two-one)
+    
+      2.b [Segmenting based on subgroup](#two-two)
+      
+      2.c [Correlations and scatterplots by subgroup](#two-three)
+      
+2. [Part 3: Results](#three)
+
+      3.a [Top ten schools in math proficiency](#three-one)
+    
+      3.b [Relationship between math proficiency and teacher effectiveness](#three-two)
+
+
+---
+
+Load relevant libraries
+
+```{r message=FALSE}
+library("readxl")
+library("dplyr")
+library("tidyverse")
+library("data.table")
+library("writexl")
+library("spatstat")
+library("ggfortify")
+library("kableExtra")
+```
+
+---
+
+#### The first thing I want to do is view the structure of the data to get an idea of how many row/columns I have, learn the names of the columns, and view the format of the data.
+
+I view the structure of the educator effectiveness snapshot data.
+
+```{r include=FALSE}
+effectiveness_snapshot = read_excel("/Volumes/Vandy Main/Job Applications/TNTP/hiring_exercise/EducatorEffectivenessSnapshot.xlsx")
+```
+
+```{r}
+str(effectiveness_snapshot)
+```
+
+---
+
+I view the structure of the student scores data.
+
+```{r include=FALSE}
+student_scores = read.csv("/Volumes/Vandy Main/Job Applications/TNTP/hiring_exercise/StudentScores.csv")
+```
+
+```{r}
+str(student_scores)
+```
+
+---
+
+<a name="one"><a/>
+
+## Part 1: Top ten schools in math proficiency
+
+---
+
+<a name="one-one"><a/>
+
+### Data cleaning/wrangling
+
+---
+
+I check for duplicated rows.
+
+```{r}
+# check for duplicated rows
+sum(duplicated(effectiveness_snapshot))
+sum(duplicated(student_scores))
+```
+
+There are no duplicated rows. 
+
+---
+
+#### I see that the variable type for the scores is character and it should be numeric.
+
+I change student scores to numeric.  This also changes values < 10 to "NA".  
+
+```{r}
+student_scores$number_tested = as.numeric(student_scores$number_tested)
+student_scores$level1_highlyproficient = as.numeric(student_scores$level1_highlyproficient)
+student_scores$level2_proficient = as.numeric(student_scores$level2_proficient)
+student_scores$level3_notproficient = as.numeric(student_scores$level3_notproficient)
+student_scores$level4_notproficient = as.numeric(student_scores$level4_notproficient)
+student_scores$percent_proficient = as.numeric(student_scores$percent_proficient)
+student_scores$average_scaled_score = as.numeric(student_scores$average_scaled_score)
+```
+
+---
+
+I view the structure again to check that the scores have been change to numeric. 
+
+```{r}
+str(student_scores)
+```
+
+
+---
+
+#### I want to double check that there are no values that are < 10 left in the data set. 
+
+I filter the data for observations where `number_tested` is less than 10. 
+
+```{r}
+student_scores %>%
+  filter(student_scores$number_tested < 10)
+```
+
+There are zero rows where `number_tested` is less than 10.
+
+---
+
+#### Because we are looking only at math scores, I want to create a subset of the data called `student_scores_math` that contains only math scores. 
+
+I filter `student_scores` for rows where the `subject_name` is "Mathematics" and view the structure. 
+
+```{r}
+student_scores_math = student_scores %>%
+  filter(student_scores$subject_name == "Mathematics")
+str(student_scores_math)
+```
+
+---
+
+#### There might be some rows in the `subject_name` column that are labeled "Math" and not "Mathematics".  I want to include these in the analysis if they exist. 
+
+I filter `student_scores` for rows where the `subject_name` includes the word "Math".
+
+```{r}
+str(student_scores %>%
+  filter(student_scores$subject_name %like% "Math"))
+```
+
+I can see that the number of rows is 3,197.  This is the same as the previous output.  Therefore, I am sure that I have included all of the observations corresponding with math.  
+
+---
+
+#### I want to check if any schools have missing values on the `percent_proficient` column.
+
+I create a new subset of the data called `student_scores_math_all_students` by filtering the `subgroup` column of the `student_scores_math` dataframe for "All Students".
+
+```{r}
+student_scores_math_all_students = student_scores_math %>%
+  filter(subgroup == "All Students")
+```
+
+---
+
+To see the schools that have missing values on the `percent_proficient` column, I use `is.na` to index the rows of the `student_scores_math_all_students` dataframe that have missing values on the `percent_proficient` column, and "building_name" to index only the column with the name of the building.
+
+```{r}
+student_scores_math_all_students[is.na(student_scores_math_all_students$percent_proficient), "building_name"]
+```
+
+I can see that there are eight rows (two schools) that have missing values on the `percent_proficient` column.  I will drop these rows before calculating the average math proficiency in each school. 
+
+---
+
+<a name="one-two"><a/>
+
+### Top ten schools.
+
+---
+
+The `student_scores` data set contains the total number of students tested, and percent of students who are proficient or higher.  There are two ways that I could find the percent of students who are proficient or higher in math at each school. 
+
+1. I can group the data by school, and then take a weighted mean of the percent of students who are proficient or higher at each grade level. 
+
+2. I can group the data by school, sum the number of students tested in each school, and sum the number of students who are proficient or higher in each school.  I can then divide the number of students who are proficient or higher in each school by the number of students tested in each school to get a proportion of students who are proficient or higher in each school.  
+
+Both of these methods should yield the same results.  
+
+---
+
+#### Method one for showing the percent of students who are proficient or higher in math at each school.
+
+I create a new dataframe called `mean_math_proficiency_by_school`
+
+- I first drop the eight rows with NA values on the `percent_proficient` column (listed in the previous output).  Because I have no way of knowing what the math scores might be for these eight observations, and I am reporting descriptive statistics, it would be unwise to impute values for the missing observations.
+
+- I group by building name and filter for "All Students"
+
+- I create a column called `mean_percent_proficient` that lists the mean percent of students who are proficient or higher in math at each school.  The means are weighted by `number_tested` to account for different class sizes.  
+
+- I arrange `mean_percent_proficient` in descending order to show the highest values first.
+
+- I use `head()` to view the top ten schools.
+
+```{r}
+mean_math_proficiency_by_school = student_scores_math %>%
+  drop_na(percent_proficient) %>%
+  group_by(building_name) %>%
+  filter(subgroup == "All Students") %>%
+  summarise(percent_proficient = weighted.mean(percent_proficient, number_tested)*100) %>%
+  arrange(desc(percent_proficient))
+
+head(mean_math_proficiency_by_school, 10)
+```
+
+---
+
+#### Method two for showing the percent of students who are proficient or higher in math at each school.
+
+I create a new dataframe called `mean_math_proficiency_by_school2`
+
+- I again drop the eight rows with NA values on the `percent_proficient` column.
+
+- I mutate the dataframe to include a new column called `num_proficient` showing the number of students who are proficient or higher.
+
+- I filter for "All Students" and group by building name.
+
+- I summarize the total number of students tested per school and the total number of students who are proficient or higher in each school.
+
+- I mutate this dataframe to include a column `percent_pro_per_school` which contains the percent of students per school who are proficient or higher. 
+
+- I arrange `percent_pro_per_school` in descending order to show the highest values first.
+
+- I use `head()` to view the top ten schools, indexing only the columns with the building name and the percent proficient per school.
+
+
+```{r}
+mean_math_proficiency_by_school2 = student_scores_math %>%
+  drop_na(percent_proficient) %>%
+  mutate(num_proficient = percent_proficient*number_tested) %>%
+  filter(subgroup == "All Students") %>%
+  group_by(building_name) %>%
+  summarise(number_tested_by_school = sum(number_tested), num_proficient_per_school = sum(num_proficient)) %>%
+  mutate(percent_pro_per_school = (num_proficient_per_school/number_tested_by_school)*100) %>%
+  arrange(desc(percent_pro_per_school))
+
+head(mean_math_proficiency_by_school2[, c("building_name", "percent_pro_per_school")], 10)
+```
+
+These two methods yield the same results.
+
+---
+
+I save the table of the top ten schools as `top_ten_schools_in_math_proficiency` so that I can pull it up later.
+
+```{r}
+top_ten_schools_in_math_proficiency = head(mean_math_proficiency_by_school, 10)
+```
+
+---
+
+<a name="two"><a/>
+
+## Part 2: Relationship between math proficiency and teacher effectiveness
+
+---
+
+<a name="two-one"><a/>
+
+### Data cleaning/wrangling
+
+---
+
+I check the number of missing rows for the `total` column of the `effectiveness_snapshot` data. 
+
+```{r}
+sum(is.na(effectiveness_snapshot$total))
+```
+
+There is one missing row.  
+
+---
+
+I check to see the which row has missing data on the `total` column by subsetting the `effectiveness_snapshot` dataframe to include only this row. 
+
+```{r}
+data.frame(subset(effectiveness_snapshot, is.na(effectiveness_snapshot$total)))
+```
+
+The only row which has missing data is "Individuals not assigned to a school are included in the district total".  This is not a school, it will automatically be dropped when I join the data in the next step. 
+
+---
+
+#### Joining the `student_scores_math` dataframe and the `effectiveness_snapshot` dataframe.
+
+Before I join the data, I want to view the amount of rows for each dataset.  Previously, when I grouped the student score data by school, I saw that there was a total of 69 schools.
+
+I view the structure of `effectiveness_snapshot` to see how many rows it contains. 
+
+```{r}
+str(effectiveness_snapshot)
+```
+
+There are 108 rows in `effectiveness_snapshot`.
+
+---
+
+It looks like there are more schools in `effectiveness_snapshot` than in the scores data. Because of this, I will perform a left join, joining `effectiveness_snapshot` to `student_scores_math` by the name of the school. 
+
+```{r}
+joined_data = left_join(student_scores_math, effectiveness_snapshot,
+                         by = c('building_name' = 'location'))
+```
+
+---
+
+#### Checking for missing data
+
+I already checked to insure there was no missing data on the `total` column, and every school on the student scores list should have a match on the educator effectiveness snapshot list.  Therefore, there should not be any rows with missing data on the `total` column after the join. 
+
+I check to make sure this is the case by viewing the unique building names of `joined_data` where the `total` column is NA. 
+
+I use `unique()` because I don't want to return the same school a bunch of times if one school has missing data. 
+
+```{r}
+unique(subset(joined_data, is.na(joined_data$total))[, "building_name"])
+```
+
+It looks like there are three building names that do not have data on the `total` column.  "All Buildings" is not a school, so I can drop that from the dataframe.  The other two schools should have values.  There might be subtle name differences or errors in spelling between the two data sets.  I will investigate further. 
+
+---
+
+I index locations from the `effectiveness_snapshot` dataframe that are similar to "Pulaski"
+
+```{r}
+effectiveness_snapshot[effectiveness_snapshot$location %like% "Pulaski", "location"]
+```
+
+I see that in the `effectiveness_snapshot` dataframe the word "Elementary" is abbreviated.  This is the source of our problems.
+
+---
+
+In `effectiveness_snapshot`, I change the name from "Pulaski Elem-Middle School" to "Pulaski Elementary-Middle School" to match the student scores data.
+
+```{r}
+effectiveness_snapshot[effectiveness_snapshot$location == "Pulaski Elem-Middle School", "location"] = "Pulaski Elementary-Middle School"
+```
+
+
+---
+
+I use the same process with the second school:
+
+I index locations from the `effectiveness_snapshot` dataframe that are similar to "Carstens"
+
+```{r}
+effectiveness_snapshot[effectiveness_snapshot$location %like% "Carstens", "location"]
+```
+
+I see we have the same problem with this school. 
+
+---
+
+I apply the same solution.
+
+```{r}
+effectiveness_snapshot[effectiveness_snapshot$location == "Carstens Elem-Middle School", "location"] = "Carstens Elementary-Middle School"
+```
+
+---
+
+Now that the names have been changed, I perform the same left join again. 
+
+```{r}
+joined_data = left_join(student_scores_math, effectiveness_snapshot,
+                        by = c('building_name' = 'location'))
+```
+
+---
+
+I use the same code as before to make sure the changes worked and that there are not schools with missing data on the `total` column. 
+
+```{r}
+unique(subset(joined_data, is.na(joined_data$total))[, "building_name"])
+```
+
+---
+
+I drop "All Buildings" because it is not a school.
+
+```{r}
+joined_data = joined_data[joined_data$building_name != "All Buildings", ]
+```
+
+---
+
+I check once more to make sure the changes worked.
+
+```{r}
+unique(subset(joined_data, is.na(joined_data$total))[, "building_name"])
+str(joined_data)
+```
+
+There are no missing building names. We can now move on. 
+
+---
+
+<a name="two-two"><a/>
+
+### Segmenting based on subgroup
+
+---
+
+#### I want to explore the relationship between math proficiency and educator effectiveness for all students, but I also would like to look at different subgroups.  It could be the case that the relationship between math proficiency and educator effectiveness is different for different subgroups.
+
+---
+
+I create a dataframe with math proficiency percentage in each school and the percentage of teachers in each school who are "effective or more" using the "All Students" subgroup and view the first five observations.
+
+```{r}
+math_proficiency_all_students = joined_data %>%
+  drop_na(percent_proficient) %>%
+  group_by(building_name) %>%
+  filter(subgroup == "All Students") %>%
+  summarise(percent_proficient = (weighted.mean(percent_proficient, number_tested)*100), 
+            effective_percent = (mean(effective_or_more_percent)*100))
+
+head(math_proficiency_all_students, 5)
+```
+
+---
+
+I use this same code to create dataframes with various subgroups
+
+```{r}
+# For all males grouped by school
+math_proficiency_male_students = joined_data %>%
+  drop_na(percent_proficient) %>%
+  group_by(building_name) %>%
+  filter(subgroup == "Male") %>%
+  summarise(percent_proficient = (weighted.mean(percent_proficient, number_tested)*100), 
+            effective_percent = (mean(effective_or_more_percent)*100))
+
+# For all females grouped by school
+math_proficiency_female_students = joined_data %>%
+  drop_na(percent_proficient) %>%
+  group_by(building_name) %>%
+  filter(subgroup == "Female") %>%
+  summarise(percent_proficient = (weighted.mean(percent_proficient, number_tested)*100), 
+            effective_percent = (mean(effective_or_more_percent)*100))
+
+# For all disadvantaged students grouped by school
+math_proficiency_disadvantaged_students = joined_data %>%
+  drop_na(percent_proficient) %>%
+  group_by(building_name) %>%
+  filter(subgroup == "Economically Disadvantaged") %>%
+  summarise(percent_proficient = (weighted.mean(percent_proficient, number_tested)*100), 
+            effective_percent = (mean(effective_or_more_percent)*100))
+
+# For all not-disadvantaged students grouped by school
+math_proficiency_not_disadvantaged_students = joined_data %>%
+  drop_na(percent_proficient) %>%
+  group_by(building_name) %>%
+  filter(subgroup == "Not Economically Disadvantaged") %>%
+  summarise(percent_proficient = (weighted.mean(percent_proficient, number_tested)*100), 
+            effective_percent = (mean(effective_or_more_percent)*100))
+
+# For all English learner students grouped by school
+math_proficiency_english_learner_students = joined_data %>%
+  drop_na(percent_proficient) %>%
+  group_by(building_name) %>%
+  filter(subgroup == "English Language Learners") %>%
+  summarise(percent_proficient = (weighted.mean(percent_proficient, number_tested)*100), 
+            effective_percent = (mean(effective_or_more_percent)*100))
+
+# For all students with disabilities grouped by school
+math_proficiency_disab_students = joined_data %>%
+  drop_na(percent_proficient) %>%
+  group_by(building_name) %>%
+  filter(subgroup == "Students with Disabilities") %>%
+  summarise(percent_proficient = (weighted.mean(percent_proficient, number_tested)*100), 
+            effective_percent = (mean(effective_or_more_percent)*100))
+
+# For all Hispanic students grouped by school
+math_proficiency_hispanic_students = joined_data %>%
+  drop_na(percent_proficient) %>%
+  group_by(building_name) %>%
+  filter(subgroup == "Hispanic") %>%
+  summarise(percent_proficient = (weighted.mean(percent_proficient, number_tested)*100), 
+            effective_percent = (mean(effective_or_more_percent)*100))
+
+# For all black students grouped by school
+math_proficiency_black_students = joined_data %>%
+  drop_na(percent_proficient) %>%
+  group_by(building_name) %>%
+  filter(subgroup == "Black, not of Hispanic origin") %>%
+  summarise(percent_proficient = (weighted.mean(percent_proficient, number_tested)*100), 
+            effective_percent = (mean(effective_or_more_percent)*100))
+
+# For all white students grouped by school
+math_proficiency_white_students = joined_data %>%
+  drop_na(percent_proficient) %>%
+  group_by(building_name) %>%
+  filter(subgroup == "White, not of Hispanic origin") %>%
+  summarise(percent_proficient = (weighted.mean(percent_proficient, number_tested)*100), 
+            effective_percent = (mean(effective_or_more_percent)*100))
+```
+
+---
+
+<a name="two-three"><a/>
+
+### Correlations and scatter plots by subgroup
+
+---
+
+#### I obtain the pearson correlation coefficient and view the scatter plot for `math_proficiency_all_students `
+
+```{r}
+cor.test(math_proficiency_all_students$percent_proficient, 
+         math_proficiency_all_students$effective_percent, 
+         method = "pearson")
+
+ggplot(math_proficiency_all_students, aes(effective_percent, percent_proficient)) + 
+  geom_point() +
+  ggtitle("All Students")
+```
+
+It looks like the correlation is 0.26.  There seems to be a weak positive correlation between math proficiency and educator effectiveness at the school level.
+
+---
+
+#### I obtain the pearson correlation coefficient and view the scatter plot for `math_proficiency_male_students`
+
+```{r}
+cor.test(math_proficiency_male_students$percent_proficient, 
+         math_proficiency_male_students$effective_percent, 
+         method = "pearson")
+
+ggplot(math_proficiency_male_students, aes(effective_percent, percent_proficient)) + 
+  geom_point() +
+  ggtitle("Male Students")
+```
+
+The correlation for male students is 0.27.  Not much difference from the overall correlation. 
+
+---
+
+#### I obtain the pearson correlation coefficient and view the scatter plot for `math_proficiency_female_students`
+
+```{r}
+cor.test(math_proficiency_female_students$percent_proficient, 
+         math_proficiency_female_students$effective_percent, 
+         method = "pearson")
+
+ggplot(math_proficiency_female_students, aes(effective_percent,percent_proficient)) + 
+  geom_point() +
+  ggtitle("Female Students")
+```
+
+The correlation here is about 0.25.  Still no deviation from the correlation with all students. 
+
+---
+
+#### I obtain the pearson correlation coefficient and view the scatter plot for `math_proficiency_disadvantaged_students`
+
+```{r}
+cor.test(math_proficiency_disadvantaged_students$percent_proficient, 
+         math_proficiency_disadvantaged_students$effective_percent, 
+         method = "pearson")
+
+ggplot(math_proficiency_disadvantaged_students, aes(effective_percent,percent_proficient)) + 
+  geom_point() +
+  ggtitle("Disadvantaged Students")
+```
+
+Correlation = 0.25.
+
+---
+
+#### I obtain the pearson correlation coefficient and view the scatter plot for `math_proficiency_not_disadvantaged_students`
+
+```{r}
+cor.test(math_proficiency_not_disadvantaged_students$percent_proficient, 
+         math_proficiency_not_disadvantaged_students$effective_percent, 
+         method = "pearson")
+
+ggplot(math_proficiency_not_disadvantaged_students, aes(effective_percent,percent_proficient)) + 
+  geom_point() +
+  ggtitle("Not-Disadvantaged Students")
+```
+
+The correlation is 0.4 for students who are not disadvantaged.  This is higher than the overall correlation. This will be important to note for the results. 
+
+---
+
+#### I obtain the pearson correlation coefficient and view the scatter plot for `median_math_proficiency_eng_learner_students`
+
+```{r}
+cor.test(math_proficiency_english_learner_students$percent_proficient, 
+         math_proficiency_english_learner_students$effective_percent, 
+         method = "pearson")
+
+ggplot(math_proficiency_english_learner_students, aes(effective_percent,percent_proficient)) + 
+  geom_point() +
+  ggtitle("English Learner Students")
+```
+
+The correlation here is 0.35.  This is an increase from the overall correlation.  However, I can see from looking at the scatter plot that there are two schools that have a high median proficiency rate.  If these two school were removed, there seems to be almost zero correlation between math proficiency and educator effectiveness at the school level when looking at English learner students. 
+
+I will add text labels to the data points so that I can see which schools are the outliers. 
+
+```{r}
+ggplot(math_proficiency_english_learner_students, aes(effective_percent, percent_proficient)) + 
+  geom_point() +
+  ggtitle("English Learner Students") +
+  geom_text(aes(label = building_name))
+```
+
+The two outliers are: 
+
+- Davidson Elementary-Middle
+- Burton International
+
+Because there are so few data points and two outliers, I will not include this subgroup in the results.
+
+---
+
+#### I obtain the pearson correlation coefficient and view the scatter plot for `math_proficiency_disab_students`
+
+```{r}
+cor.test(math_proficiency_disab_students$percent_proficient, 
+         math_proficiency_disab_students$effective_percent, 
+         method = "pearson")
+
+ggplot(math_proficiency_disab_students, aes(effective_percent,percent_proficient)) + 
+  geom_point() +
+  ggtitle("Students with disabilities")
+```
+
+Correlation = 0.23
+
+---
+
+#### I obtain the pearson correlation coefficient and view the scatter plot for `math_proficiency_hispanic_students`
+
+```{r}
+cor.test(math_proficiency_hispanic_students$percent_proficient, 
+         math_proficiency_hispanic_students$effective_percent, 
+         method = "pearson")
+
+ggplot(math_proficiency_hispanic_students, aes(effective_percent,percent_proficient)) + 
+  geom_point() +
+  ggtitle("Hispanic Students")
+```
+
+correlation = 0.05.  There is no correlation here.  However, there is one outlier, all of the schools are within 10 percentage points, and the there are very few data points so I won't include this in the results.
+
+---
+
+#### I obtain the pearson correlation coefficient and view the scatter plot for `math_proficiency_black_students`
+
+```{r}
+cor.test(math_proficiency_black_students$percent_proficient, 
+         math_proficiency_black_students$effective_percent, 
+         method = "pearson")
+
+ggplot(math_proficiency_black_students, aes(effective_percent,percent_proficient)) + 
+  geom_point() +
+  ggtitle("Black Students")
+```
+
+Correlation = 0.24.
+
+---
+
+#### I obtain the pearson correlation coefficient and view the scatter plot for `math_proficiency_white_students`
+
+```{r}
+cor.test(math_proficiency_white_students$percent_proficient, 
+         math_proficiency_white_students$effective_percent, 
+         method = "pearson")
+
+ggplot(math_proficiency_white_students, aes(effective_percent,percent_proficient)) + 
+  geom_point() +
+  ggtitle("White Students")
+```
+
+Correlation = 0.4.  However, there are too few data points here to come to any conclusions. 
+
+---
+
+<a name="three"><a/>
+
+## Part 3: Results
+
+---
+
+<a name="three-one"><a/>
+
+### Top ten schools in math proficiency
+
+---
+
+
+```{r echo=TRUE}
+kable(top_ten_schools_in_math_proficiency) %>% 
+  kable_styling(latex_options = "striped")
+```
+
+
+
+---
+
+<a name="three-two"><a/>
+
+### Relationship between math proficiency and teacher effectiveness
+
+---
+
+#### Summary of results: 
+
+There is a weak relationship between the percentage of students who are proficient or higher in math at each school, and the percentage of teachers who are effective at each school.  For students who are not economically disadvantaged, this relationship is considerably stronger. 
+
+-	**All students:** weak relationship (correlation of 0.26)
+
+-	**Males:** weak relationship (correlation of 0.27)
+
+-	**Females:** weak relationship (correlation of 0.25)
+
+-	**Economically disadvantaged students:** weak relationship (correlation of 0.25)
+
+-	**Not economically disadvantaged students:** moderate relationship (correlation of 0.4)
+
+-	**Students with disabilities:** weak relationship (correlation of 0.23)
+
+-	**Black students:** weak relationship (correlation of 0.24)
+
+
+
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
